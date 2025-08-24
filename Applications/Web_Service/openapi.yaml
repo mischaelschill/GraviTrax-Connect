@@ -1,0 +1,591 @@
+openapi: 3.0.3
+info:
+  title: GraviTrax Connect Web Service API
+  version: "1.4.0"
+  description: |
+    A RESTful API to interact with GraviTrax Connect stones. It provides multi-connection endpoints
+    for connecting to bridges, sending signals, receiving notifications (with ETag-based long polling),
+    and reading constants. Discovery of nearby bridges is also supported.
+  contact:
+    name: GraviTrax Connect
+servers:
+  - url: http://localhost:5000
+    description: Local development server
+tags:
+  - name: Connection
+  - name: Signals
+  - name: Notifications
+  - name: Constants
+  - name: Discovery
+paths:
+  /api/simple/signals:
+    post:
+      tags: [Signals]
+      summary: Send a signal using the default connection (auto-create, auto-bridge-mode)
+      operationId: simpleSendSignal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignalRequest'
+      responses:
+        '200':
+          description: Signal sent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionResponse' }
+        '500':
+          description: Failed to connect or send
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionResponse' }
+  /api/simple/notifications:
+    get:
+      tags: [Notifications]
+      summary: Get notifications using the default connection (auto-create, auto-enable)
+      operationId: simpleGetNotifications
+      parameters:
+        - in: header
+          name: If-None-Match
+          required: false
+          schema: { type: string }
+          description: ETag value from the last response. If omitted, server waits until new notifications or timeout.
+      responses:
+        '200':
+          description: New notifications available
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  oneOf:
+                    - $ref: '#/components/schemas/SignalNotification'
+                    - $ref: '#/components/schemas/DataNotification'
+        '204':
+          description: No new notifications within timeout and no ETag provided
+          headers:
+            ETag:
+              schema: { type: string }
+        '304':
+          description: No new notifications since the provided ETag
+          headers:
+            ETag:
+              schema: { type: string }
+  /api/v1/connections:
+    post:
+      tags: [Connection]
+      summary: Establish a new connection to a bridge
+      operationId: createConnection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                connection_id:
+                  type: string
+                  description: Client-defined connection identifier (must be unique).
+                  example: "my-conn-123"
+                mac_address:
+                  type: string
+                  description: Optional MAC address of the bridge to connect to.
+                  example: "AA:BB:CC:DD:EE:FF"
+                notifications:
+                  type: boolean
+                  default: false
+                  description: Enable storing notifications for this connection.
+                bridge_mode:
+                  type: boolean
+                  default: false
+                  description: Enable bridge mode for this connection (stones listen only to bridge).
+              required: [connection_id]
+      responses:
+        '200':
+          description: Connection established
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  connection_id: { type: string }
+        '409':
+          description: Connection ID already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionResponse'
+        '504':
+          description: Connection timed out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionResponse'
+        '500':
+          description: Connection failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionResponse'
+    get:
+      tags: [Connection]
+      summary: List all connections
+      operationId: listConnections
+      responses:
+        '200':
+          description: Connections list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connections:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        connection_id: { type: string }
+                        connected: { type: boolean }
+                        mac_address:
+                          type: string
+                          nullable: true
+  /api/v1/connections/{connectionId}:
+    get:
+      tags: [Connection]
+      summary: Get information about a connection
+      operationId: getConnection
+      parameters:
+        - in: path
+          name: connectionId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Connection details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connection_id: { type: string }
+                  connected: { type: boolean }
+                  notifications: { type: boolean }
+                  bridge_mode: { type: boolean }
+                  mac_address:
+                    type: string
+                    nullable: true
+        '404':
+          description: Connection not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    put:
+      tags: [Connection]
+      summary: Update connection properties
+      operationId: updateConnection
+      parameters:
+        - in: path
+          name: connectionId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notifications:
+                  type: boolean
+                  description: Enable or disable notifications storage.
+                bridge_mode:
+                  type: boolean
+                  description: Enable or disable bridge mode.
+      responses:
+        '200':
+          description: Updated connection
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connection_id: { type: string }
+                  connected: { type: boolean }
+                  notifications: { type: boolean }
+                  bridge_mode: { type: boolean }
+                  mac_address:
+                    type: string
+                    nullable: true
+        '404':
+          description: Connection not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionResponse' }
+    delete:
+      tags: [Connection]
+      summary: Disconnect and remove a connection
+      operationId: deleteConnection
+      parameters:
+        - in: path
+          name: connectionId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Disconnected (or not found)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionResponse' }
+        '500':
+          description: Disconnect failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionResponse' }
+  /api/v1/connections/{connectionId}/signals:
+    post:
+      tags: [Signals]
+      summary: Send a signal via a specific connection
+      operationId: sendSignalConnection
+      parameters:
+        - in: path
+          name: connectionId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignalRequest'
+      responses:
+        '200':
+          description: Signal sent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionResponse' }
+        '404':
+          description: Connection not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionResponse' }
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionResponse' }
+        '500':
+          description: Error sending signal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionResponse' }
+  /api/v1/connections/{connectionId}/notifications:
+    get:
+      tags: [Notifications]
+      summary: Get notifications for a specific connection (ETag long-polling)
+      operationId: getNotificationsConnection
+      parameters:
+        - in: path
+          name: connectionId
+          required: true
+          schema: { type: string }
+        - in: header
+          name: If-None-Match
+          required: false
+          schema: { type: string }
+          description: ETag value from the last response. If omitted, the server waits for the next notification before responding.
+      responses:
+        '200':
+          description: New notifications available
+          headers:
+            ETag:
+              schema: { type: string }
+              description: Version of the notifications list. Send back via If-None-Match.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  oneOf:
+                    - $ref: '#/components/schemas/SignalNotification'
+                    - $ref: '#/components/schemas/DataNotification'
+        '204':
+          description: No new notifications within timeout and no ETag provided
+          headers:
+            ETag:
+              schema: { type: string }
+        '304':
+          description: No new notifications since the provided ETag
+          headers:
+            ETag:
+              schema: { type: string }
+        '404':
+          description: Connection not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: Notifications are disabled for this connection
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/constants:
+    get:
+      tags: [Constants]
+      summary: Get constants for stones, statuses, and colors
+      operationId: getConstants
+      responses:
+        '200':
+          description: Constants
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConstantsResponse'
+  /api/v1/connections/{connectionId}/battery:
+    get:
+      tags: [Connection]
+      summary: Get battery string for a specific connection
+      operationId: getConnectionBattery
+      parameters:
+        - in: path
+          name: connectionId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Battery value
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatteryResponse'
+        '400':
+          description: Not connected
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Connection not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/connections/{connectionId}/info:
+    get:
+      tags: [Connection]
+      summary: Get bridge info for a specific connection
+      operationId: getConnectionInfo
+      parameters:
+        - in: path
+          name: connectionId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Bridge info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BridgeInfoResponse'
+        '400':
+          description: Not connected
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Connection not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/bridges:
+    get:
+      tags: [Discovery]
+      summary: Scan for available GraviTrax bridges
+      operationId: listBridges
+      parameters:
+        - in: query
+          name: timeout
+          required: false
+          schema:
+            type: number
+            minimum: 0.1
+            default: 5
+          description: Scan duration in seconds.
+        - in: query
+          name: name
+          required: false
+          schema:
+            type: string
+            default: "GraviTrax Bridge"
+          description: Device name filter. Use empty string to scan for all devices.
+      responses:
+        '200':
+          description: List of discovered bridge MAC addresses
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BridgesResponse'
+        '500':
+          description: Scanning failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BridgesResponse'
+components:
+  schemas:
+    ActionResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+          description: Human-readable message.
+      required: [success]
+    SignalRequest:
+      type: object
+      description: Parameters for sending a signal. Some fields accept either symbolic names or integers.
+      properties:
+        status:
+          description: Status to send. Can be an integer or a symbolic string (e.g., "ALL").
+          oneOf:
+            - type: integer
+            - type: string
+          example: "ALL"
+        color:
+          description: Color to send. Accepts integer or one of "red", "green", "blue".
+          oneOf:
+            - type: integer
+            - type: string
+          example: "red"
+        stone:
+          description: Target stone. Accepts integer or a symbolic name (e.g., "bridge").
+          oneOf:
+            - type: integer
+            - type: string
+          example: "bridge"
+        count:
+          type: integer
+          minimum: 1
+          default: 1
+          description: Number of signals to send (use >1 for periodic).
+        resends:
+          type: integer
+          minimum: 0
+          default: 12
+          description: Number of low-level resends per signal.
+        resend_gap:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Gap between resends in milliseconds.
+        gap:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Gap between signals when count > 1 in milliseconds.
+      required: [status, color, stone]
+    SignalNotification:
+      type: object
+      properties:
+        timestamp:
+          type: number
+          format: double
+        type:
+          type: string
+          enum: [signal]
+        status:
+          type: integer
+        status_name:
+          type: string
+        stone:
+          type: integer
+        stone_name:
+          type: string
+        color:
+          type: integer
+        color_name:
+          type: string
+      required: [timestamp, type]
+    DataNotification:
+      type: object
+      properties:
+        timestamp:
+          type: number
+          format: double
+        type:
+          type: string
+          enum: [data]
+        data:
+          description: Raw data payload
+          oneOf:
+            - type: string
+            - type: object
+              additionalProperties: true
+            - type: array
+              items: {}
+      required: [timestamp, type]
+    ConstantsResponse:
+      type: object
+      properties:
+        stone_types:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Maps stone name (lowercase) to numeric value.
+        stone_values:
+          type: object
+          additionalProperties:
+            type: string
+          description: Maps numeric stone value (as string key) to name.
+        statuses:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Maps status name (uppercase) to numeric value.
+        status_values:
+          type: object
+          additionalProperties:
+            type: string
+          description: Maps numeric status value (as string key) to name.
+        colors:
+          type: object
+          properties:
+            red: { type: integer }
+            green: { type: integer }
+            blue: { type: integer }
+      required: [stone_types, stone_values, statuses, status_values, colors]
+    BridgesResponse:
+      type: object
+      properties:
+        bridges:
+          type: array
+          items:
+            type: string
+            description: MAC address of a discovered bridge
+        error:
+          type: string
+          nullable: true
+          description: Present only on errors.
+      required: [bridges]
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+    BatteryResponse:
+      type: object
+      properties:
+        battery:
+          type: string
+      required: [battery]
+    BridgeInfoResponse:
+      type: object
+      properties:
+        info:
+          type: object
+          additionalProperties: true
+      required: [info]

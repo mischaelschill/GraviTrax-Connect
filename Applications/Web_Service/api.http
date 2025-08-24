@@ -1,0 +1,134 @@
+# GraviTrax Connect Web Service — HTTP Client Requests
+# Base URL and common variables
+@baseUrl = http://localhost:5000
+
+# Optionally predefine a MAC address to connect t o (leave empty to auto-connect)
+
+###
+# 1) Discovery: Scan for bridges
+GET {{baseUrl}}/api/v1/bridges
+Accept: application/json
+
+> {% 
+// Capture first discovered bridge MAC and store it for subsequent requests
+try {
+  const bridges = response.body && response.body.bridges;
+  if (Array.isArray(bridges) && bridges.length > 0 && typeof bridges[0] === 'string') {
+    // Set both request-level and global variable to avoid precedence issues
+    client.global.set("mac", bridges[0]);
+  }
+} catch (e) {
+  // ignore parsing issues
+}
+%}
+
+###
+# 2) Connection: Create a new connection
+# - Provide a client-defined connection_id (must be unique). Adjust below if re-running.
+# - If you know the MAC, set the mac variable above; otherwise, omit or leave empty.
+POST {{baseUrl}}/api/v1/connections
+Content-Type: application/json
+Accept: application/json
+
+{
+  "connection_id": "test-conn-1",
+  "mac_address": "{{mac}}",
+  "notifications": true,
+  "bridge_mode": false
+}
+
+> {% 
+// Capture connection_id for later requests if present
+if (response.body && response.body.connection_id) {
+  client.global.set("connectionId", response.body.connection_id);
+}
+%}
+
+###
+# 3) Connection: List all connections
+GET {{baseUrl}}/api/v1/connections
+Accept: application/json
+
+###
+# 4) Connection: Get connection details
+GET {{baseUrl}}/api/v1/connections/{{connectionId}}
+Accept: application/json
+
+###
+# 5) Connection: Update connection (toggle notifications / bridge mode)
+PUT {{baseUrl}}/api/v1/connections/{{connectionId}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "notifications": true,
+  "bridge_mode": true
+}
+
+###
+# 6) Signals: Send a signal via the connection
+POST {{baseUrl}}/api/v1/connections/{{connectionId}}/signals
+Content-Type: application/json
+Accept: application/json
+
+{
+  "status": "ALL",
+  "color": "red",
+  "stone": "bridge",
+  "count": 1,
+  "resends": 12,
+  "resend_gap": 0,
+  "gap": 0
+}
+
+###
+# 7) Notifications: Long-poll without ETag (may return 200 with data or 204 when timeout)
+GET {{baseUrl}}/api/v1/connections/{{connectionId}}/notifications
+Accept: application/json
+
+> {% 
+// Save ETag if returned
+const etag = response.headers.valueOf("ETag");
+if (etag) {
+  client.global.set("notificationsEtag", etag);
+}
+%}
+
+###
+# 8) Notifications: Request with If-None-Match ETag (expect 304 if no new data)
+GET {{baseUrl}}/api/v1/connections/{{connectionId}}/notifications
+If-None-Match: {{notificationsEtag}}
+Accept: application/json
+
+> {% 
+// Update ETag if a new one is returned
+const etag2 = response.headers.valueOf("ETag");
+if (etag2) {
+  client.global.set("notificationsEtag", etag2);
+}
+%}
+
+###
+# 9) Constants: Retrieve mapping of stones, statuses, and colors
+GET {{baseUrl}}/api/v1/constants
+Accept: application/json
+
+###
+# 10) Connection: Get battery information
+GET {{baseUrl}}/api/v1/connections/{{connectionId}}/battery
+Accept: application/json
+
+###
+# 11) Connection: Get bridge info
+GET {{baseUrl}}/api/v1/connections/{{connectionId}}/info
+Accept: application/json
+
+###
+# 12) Connection: Delete (disconnect) the connection
+DELETE {{baseUrl}}/api/v1/connections/{{connectionId}}
+Accept: application/json
+
+###
+# 13) Connection: Verify deletion (should return 404)
+GET {{baseUrl}}/api/v1/connections/{{connectionId}}
+Accept: application/json

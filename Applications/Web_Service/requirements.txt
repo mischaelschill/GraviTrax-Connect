@@ -1,0 +1,5 @@
+gravitraxconnect
+flask[async]
+flask-cors
+PyYAML
+jsonschema
